@@ -1,0 +1,84 @@
+
+name: Python QA Automation CI
+
+# События, запускающие автоматизацию
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+# Минимально необходимые права
+permissions:
+  contents: read
+
+jobs:
+
+  tests:
+    name: API + UI + Integration Tests
+
+    # Виртуальная машина GitHub
+    runs-on: ubuntu-24.04
+
+    # Максимальное время выполнения Job
+    timeout-minutes: 30
+
+    # Переменные окружения
+    env:
+      API_BASE_URL: https://automationexercise.com
+      API_TIMEOUT: "10"
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+
+      # 1. Получение исходного кода
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      # 2. Установка Python
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.15"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      # 3. Проверка версии Python
+      - name: Show Python version
+        run: |
+          python --version
+          python -m pip --version
+
+      # 4. Установка Python-зависимостей
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      # 5. Установка браузера Chromium и системных библиотек
+      - name: Install Playwright Chromium
+        run: |
+          python -m playwright install --with-deps chromium
+
+      # 6. Запуск всех автоматизированных тестов
+      - name: Run all tests
+        run: |
+          pytest -v --alluredir=allure-results --clean-alluredir
+
+      # 7. Сохранение результатов тестирования
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: qa-test-results-${{ github.run_number }}
+          path: |
+            allure-results/
+            logs/
+            artifacts/screenshots/
+          if-no-files-found: warn
+          retention-days: 14

@@ -1,0 +1,1 @@
+BRANDS_LIST = "/api/brandsList"

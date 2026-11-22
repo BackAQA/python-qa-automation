@@ -3,3 +3,4 @@ playwright==1.57.0
 pytest-playwright[base-url]==0.10.0
 allure-pytest==2.16.2
 pytest-xdist==3.8.0
+requests==2.34.2

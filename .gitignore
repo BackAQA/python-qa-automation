@@ -37,3 +37,6 @@ tests/artifacts/
 
 # Research and exploratory scripts
 research/
+
+# Журналы выполнения автотестов
+logs/

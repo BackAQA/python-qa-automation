@@ -1,15 +1,23 @@
+import json
+import re
 
+from pathlib import Path
 from typing import Iterator
 from uuid import uuid4
 
+import allure
 import pytest
 from playwright.sync_api import Page, expect
 
+from api.clients.api_client import ApiClient
+from api.endpoints.users import (
+    CREATE_ACCOUNT,
+    DELETE_ACCOUNT,
+    USER_DETAILS
+)
 from pages.login_page import LoginPage
 from pages.signup_page import SignupPage
-import re
-from pathlib import Path
-import allure
+from utils.config import settings
 
 @pytest.fixture
 def registered_user(page: Page) -> Iterator[dict[str, str]]:
@@ -114,6 +122,173 @@ def registered_user(page: Page) -> Iterator[dict[str, str]]:
 
             expect(account_deleted_message).to_be_visible()
             expect(account_deleted_message).to_contain_text("Account Deleted!")
+
+@pytest.fixture
+def api_client() -> Iterator[ApiClient]:
+    """
+    Создаёт общий API-клиент.
+    После завершения теста сохраняет историю запросов в Allure
+    и закрывает HTTP-сессию.
+    """
+
+    client = ApiClient(
+        base_url=settings.api_base_url,
+        timeout=settings.api_timeout
+    )
+
+    try:
+        yield client
+
+    finally:
+        try:
+            # Прикладываем историю API-запросов к отчёту Allure
+            if client.request_history:
+
+                allure.attach(
+                    json.dumps(
+                        client.request_history,
+                        ensure_ascii=False,
+                        indent=4
+                    ),
+                    name="История API-запросов",
+                    attachment_type=allure.attachment_type.JSON
+                )
+
+        finally:
+            # Закрываем HTTP-сессию
+            client.close()
+
+@pytest.fixture
+def api_registered_user(
+    api_client: ApiClient
+) -> Iterator[dict[str, str]]:
+    """
+    Создаёт тестового пользователя через API
+    и удаляет его после завершения теста.
+    """
+
+    # Генерируем уникальный email
+    email = f"qa.automation.{uuid4().hex}@example.com"
+
+    # Подготавливаем данные тестового пользователя
+    user_data = {
+        "name": "QA Automation Tester",
+        "email": email,
+        "password": "TestPassword123!",
+        "title": "Mr",
+        "birth_date": "10",
+        "birth_month": "5",
+        "birth_year": "1995",
+        "firstname": "QA",
+        "lastname": "Tester",
+        "company": "QA Automation",
+        "address1": "Test Street 10",
+        "address2": "Office 1",
+        "country": "United States",
+        "zipcode": "10001",
+        "state": "New York",
+        "city": "New York",
+        "mobile_number": "1234567890"
+    }
+
+    # Отмечаем, был ли пользователь создан
+    account_created = False
+
+    try:
+        # SETUP: создаём пользователя через API
+        create_response = api_client.post(
+            CREATE_ACCOUNT,
+            data=user_data
+        )
+
+        create_data = create_response.json()
+
+        account_created = create_data.get("responseCode") == 201
+
+        # Проверяем HTTP-статус
+        assert create_response.status_code == 200, (
+            f"Ожидался HTTP-статус 200 при создании пользователя, "
+            f"получен {create_response.status_code}. "
+            f"Ответ: {create_response.text}"
+        )
+
+        # Проверяем бизнес-результат регистрации
+        assert account_created, (
+            f"Не удалось создать тестового пользователя. "
+            f"Ответ API: {create_data}"
+        )
+
+        # Проверяем сообщение API
+        assert create_data.get("message") == "User created!", (
+            f"Неожиданное сообщение при создании пользователя: "
+            f"{create_data.get('message')}"
+        )
+
+        # Передаём данные тесту
+        yield user_data
+
+    finally:
+        # TEARDOWN: удаляем пользователя через API
+        if account_created:
+
+            delete_response = api_client.delete(
+                DELETE_ACCOUNT,
+                data={
+                    "email": user_data["email"],
+                    "password": user_data["password"]
+                }
+            )
+
+            # Проверяем HTTP-ответ удаления
+            assert delete_response.status_code == 200, (
+                f"Не удалось удалить тестового пользователя. "
+                f"HTTP-статус: {delete_response.status_code}"
+            )
+
+            delete_data = delete_response.json()
+
+            # Проверяем результат удаления
+            assert delete_data.get("responseCode") == 200, (
+                f"Ошибка при очистке тестовых данных: {delete_data}"
+            )
+
+            assert delete_data.get("message") == "Account deleted!", (
+                f"Неожиданное сообщение при удалении пользователя: "
+                f"{delete_data.get('message')}"
+            )
+
+
+            # Дополнительно проверяем, что пользователь действительно удалён
+            with allure.step(
+                "Проверяем отсутствие удалённого пользователя через API"
+            ):
+
+                verification_response = api_client.get(
+                    USER_DETAILS,
+                    params={
+                        "email": user_data["email"]
+                    }
+                )
+
+                # Проверяем HTTP-ответ
+                assert verification_response.status_code == 200, (
+                    f"Не удалось проверить удаление пользователя. "
+                    f"HTTP-статус: {verification_response.status_code}"
+                )
+
+                verification_data = verification_response.json()
+
+                # Проверяем, что API больше не находит пользователя
+                assert verification_data.get("responseCode") == 404, (
+                    f"Ожидался бизнес-код 404 после удаления аккаунта. "
+                    f"Получен ответ: {verification_data}"
+                )
+
+                # Проверяем отсутствие данных пользователя
+                assert not verification_data.get("user"), (
+                    f"Удалённый пользователь всё ещё доступен через API: "
+                    f"{verification_data.get('user')}"
+                )
 
 
 @pytest.hookimpl(hookwrapper=True)
